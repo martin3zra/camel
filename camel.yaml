@@ -1,0 +1,11 @@
+# camel.yaml – Default Configuration for the Migration CLI Application
+#
+# Database settings can be overridden via environment variables.
+db:
+  driver: "postgres"       # Options: postgres, mysql, sqlite, mssql, etc.
+  source: "postgres://username:password@localhost:5432/yourdb?sslmode=disable"
+
+# Migration settings
+migration:
+  directory: "database"    # Folder where migration YAML files are stored.
+  pattern: "*.yaml"        # Glob pattern to search for migration files.

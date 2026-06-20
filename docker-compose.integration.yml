@@ -1,0 +1,36 @@
+# Throwaway databases for `make integration`. Non-default ports so they don't
+# collide with anything already running locally.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: camel
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: camel
+    ports: ["55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U camel"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_DATABASE: camel
+      MYSQL_USER: camel
+      MYSQL_PASSWORD: secret
+    ports: ["33060:3306"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -psecret"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  mssql:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    environment:
+      ACCEPT_EULA: "1"
+      MSSQL_SA_PASSWORD: "Camel_Test_123"
+    ports: ["14330:1433"]

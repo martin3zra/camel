@@ -1,0 +1,19 @@
+# Dead pre-refactor file
+main.go.bak
+
+# Build output
+/camel
+/bin/
+
+# Test artifacts
+*.sqlite
+*.db
+
+# Go cache (pinned in Makefile for sandbox)
+.gocache/
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
