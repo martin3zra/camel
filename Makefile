@@ -1,6 +1,11 @@
-# Workspace-local Go build cache keeps the sandbox happy.
+# Pin GOCACHE to a local path only in sandboxed environments (macOS dev).
+# In CI the default Go cache location is used (GOCACHE already set by runner).
+ifdef CAMEL_SANDBOX
 GOCACHE ?= /private/tmp/camel-gocache
 GO := GOCACHE=$(GOCACHE) go
+else
+GO := go
+endif
 
 COMPOSE := docker compose -f docker-compose.integration.yml
 
