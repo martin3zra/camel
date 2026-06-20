@@ -23,11 +23,25 @@ LOCAL_PG_DSN    := postgres://postgres:secret@localhost:5433/camel_test?sslmode=
 LOCAL_MYSQL_DSN := root:secret@tcp(127.0.0.1:3306)/camel_test
 LOCAL_MSSQL_DSN := sqlserver://sa:Camel_Test_123@localhost:1433?database=camel_test&$(MSSQL_DSN_OPTS)
 
-.PHONY: build test vet fmt integration integration-up integration-test integration-down \
-	mssql-up local-setup integration-local
+.PHONY: build build-all dist-clean test vet fmt integration integration-up integration-test \
+	integration-down mssql-up local-setup integration-local
 
 build:
 	$(GO) build ./...
+
+# Cross-compile for all supported platforms into dist/.
+# -ldflags="-s -w" strips debug info for smaller binaries.
+build-all:
+	mkdir -p dist
+	GOOS=darwin  GOARCH=amd64 $(GO) build -ldflags="-s -w" -o dist/camel-darwin-amd64     ./cmd/camel
+	GOOS=darwin  GOARCH=arm64 $(GO) build -ldflags="-s -w" -o dist/camel-darwin-arm64     ./cmd/camel
+	GOOS=linux   GOARCH=amd64 $(GO) build -ldflags="-s -w" -o dist/camel-linux-amd64      ./cmd/camel
+	GOOS=linux   GOARCH=arm64 $(GO) build -ldflags="-s -w" -o dist/camel-linux-arm64      ./cmd/camel
+	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="-s -w" -o dist/camel-windows-amd64.exe ./cmd/camel
+	cd dist && sha256sum * > checksums.txt
+
+dist-clean:
+	rm -rf dist
 
 test:
 	$(GO) test ./...

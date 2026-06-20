@@ -8,11 +8,38 @@ Camel is a lightweight Go CLI for teams who want migrations they write, review, 
 
 ## Install
 
+### Download a pre-built binary
+
+Go to the [Releases page](https://github.com/martin3zra/camel/releases) and
+download the binary for your OS:
+
+| OS | File |
+|---|---|
+| macOS — Apple Silicon (M1/M2/M3) | `camel-darwin-arm64` |
+| macOS — Intel | `camel-darwin-amd64` |
+| Linux — x86-64 | `camel-linux-amd64` |
+| Linux — ARM64 | `camel-linux-arm64` |
+| Windows — x86-64 | `camel-windows-amd64.exe` |
+
+**macOS / Linux** — make it executable and move it to your PATH:
+
+```bash
+chmod +x camel-darwin-arm64
+sudo mv camel-darwin-arm64 /usr/local/bin/camel
+camel init
+```
+
+**Windows** — rename the file to `camel.exe` and add its folder to your `PATH`.
+
+A `checksums.txt` file is included in each release to verify the download.
+
+### Install with Go (requires Go 1.22+)
+
 ```bash
 go install github.com/martin3zra/camel/cmd/camel@latest
 ```
 
-Or build from source:
+### Build from source
 
 ```bash
 git clone https://github.com/martin3zra/camel

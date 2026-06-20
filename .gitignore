@@ -4,6 +4,7 @@ main.go.bak
 # Build output
 /camel
 /bin/
+/dist/
 
 # Test artifacts
 *.sqlite
