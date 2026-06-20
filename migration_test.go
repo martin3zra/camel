@@ -78,8 +78,10 @@ CREATE UNIQUE INDEX "posts_slug_uq" ON "posts" ("slug");
 	if len(intent.Statements) != 2 {
 		t.Fatalf("want 2 statements (comments stripped), got %d: %v", len(intent.Statements), intent.Statements)
 	}
-	if len(m.File.Down) != 0 {
-		t.Fatal(".sql files must have an empty down block")
+	// No -- down section → down block is empty raw intent
+	downIntent := m.File.Down["schema"]
+	if len(downIntent.Statements) != 0 {
+		t.Fatalf("no -- down section: want 0 down statements, got %d", len(downIntent.Statements))
 	}
 }
 
@@ -104,7 +106,8 @@ func TestListMigrationsPicksUpSQLFiles(t *testing.T) {
 	}
 }
 
-func TestParseSQLStatements(t *testing.T) {
+func TestParseSQLFileSemicolonNoSections(t *testing.T) {
+	// Schema dump style: no -- up/down markers, semicolons as separators.
 	content := []byte(`-- header comment
 -- another comment
 
@@ -113,15 +116,60 @@ CREATE TABLE "posts" ("id" INTEGER NOT NULL PRIMARY KEY);
 CREATE UNIQUE INDEX "posts_slug_uq" ON "posts" ("slug");
 
 `)
-	stmts := parseSQLStatements(content)
-	if len(stmts) != 2 {
-		t.Fatalf("want 2 statements, got %d: %v", len(stmts), stmts)
+	up, down := parseSQLFile(content)
+	if len(up) != 2 {
+		t.Fatalf("want 2 up statements, got %d: %v", len(up), up)
 	}
-	if !strings.Contains(stmts[0], "CREATE TABLE") {
-		t.Errorf("first stmt should be CREATE TABLE: %s", stmts[0])
+	if !strings.Contains(up[0], "CREATE TABLE") {
+		t.Errorf("first stmt should be CREATE TABLE: %s", up[0])
 	}
-	if !strings.Contains(stmts[1], "CREATE UNIQUE INDEX") {
-		t.Errorf("second stmt should be CREATE UNIQUE INDEX: %s", stmts[1])
+	if !strings.Contains(up[1], "CREATE UNIQUE INDEX") {
+		t.Errorf("second stmt should be CREATE UNIQUE INDEX: %s", up[1])
+	}
+	if len(down) != 0 {
+		t.Errorf("no down section: want 0 down statements, got %d", len(down))
+	}
+}
+
+func TestParseSQLFileWithSections(t *testing.T) {
+	// Procedure style: -- up / -- down sections, GO separator.
+	content := []byte(`-- Migration: create_my_proc.sql
+
+-- up
+CREATE PROCEDURE my_proc()
+BEGIN
+  UPDATE posts SET slug = LOWER(slug) WHERE slug IS NULL;
+  UPDATE posts SET updated_at = NOW();
+END
+GO
+
+-- down
+DROP PROCEDURE IF EXISTS my_proc
+GO
+`)
+	up, down := parseSQLFile(content)
+	if len(up) != 1 {
+		t.Fatalf("want 1 up statement (the full procedure), got %d: %v", len(up), up)
+	}
+	if !strings.Contains(up[0], "CREATE PROCEDURE") {
+		t.Errorf("up must contain CREATE PROCEDURE: %s", up[0])
+	}
+	if strings.Contains(up[0], "GO") {
+		t.Errorf("GO must not appear in the parsed statement: %s", up[0])
+	}
+	if len(down) != 1 {
+		t.Fatalf("want 1 down statement, got %d: %v", len(down), down)
+	}
+	if !strings.Contains(down[0], "DROP PROCEDURE") {
+		t.Errorf("down must contain DROP PROCEDURE: %s", down[0])
+	}
+}
+
+func TestParseSQLFileGOCaseInsensitive(t *testing.T) {
+	content := []byte("-- up\nSELECT 1\ngo\nSELECT 2\nGo\n")
+	up, _ := parseSQLFile(content)
+	if len(up) != 2 {
+		t.Fatalf("GO is case-insensitive: want 2 statements, got %d: %v", len(up), up)
 	}
 }
 

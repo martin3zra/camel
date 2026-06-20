@@ -184,7 +184,7 @@ func usage() {
 	fmt.Println("Usage:")
 	fmt.Println("  camel init")
 	fmt.Println("  camel config")
-	fmt.Println("  camel make <name> [--format yaml|json]")
+	fmt.Println("  camel make <name> [--format yaml|json|sql]")
 	fmt.Println("  camel plan [--file path] [--direction up|down]")
 	fmt.Println("  camel migrate [--pretend]")
 	fmt.Println("  camel rollback [--step N] [--all] [--pretend]")

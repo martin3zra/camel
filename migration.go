@@ -85,12 +85,9 @@ func LoadMigration(path string) (Migration, error) {
 			err = json.Unmarshal(content, &file)
 		}
 	case ".sql":
-		stmts := parseSQLStatements(content)
-		file.Up = map[string]TableIntent{
-			"schema": {Action: "raw", Statements: stmts},
-		}
-		// .sql files are up-only; rollback is a no-op
-		file.Down = map[string]TableIntent{}
+		up, down := parseSQLFile(content)
+		file.Up = map[string]TableIntent{"schema": {Action: "raw", Statements: up}}
+		file.Down = map[string]TableIntent{"schema": {Action: "raw", Statements: down}}
 	default:
 		err = yaml.Unmarshal(content, &file)
 	}
@@ -101,12 +98,87 @@ func LoadMigration(path string) (Migration, error) {
 	return Migration{Path: path, Name: filepath.Base(path), File: file}, nil
 }
 
-// parseSQLStatements splits a .sql file into individual statements by
-// semicolon, stripping blank lines and -- comments. Sufficient for schema
-// dumps (CREATE TABLE / CREATE INDEX); not intended for stored procedures.
-func parseSQLStatements(content []byte) []string {
+// parseSQLFile parses a .sql migration file into up and down statement lists.
+//
+// Files may be sectioned with "-- up" and "-- down" markers (recommended for
+// procedures, functions, and triggers that need a rollback). Files without
+// markers are treated as up-only (schema dumps, simple DDL).
+//
+// Within each section, GO on its own line is the statement separator when
+// present (handles procedure bodies that contain internal semicolons).
+// Without GO, statements are split on semicolons.
+func parseSQLFile(content []byte) (up, down []string) {
+	var upLines, downLines []string
+	current := &upLines // default: everything goes to up
+	hasMarkers := false
+
+	for _, line := range strings.Split(string(content), "\n") {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if lower == "-- up" || lower == "--up" {
+			hasMarkers = true
+			current = &upLines
+			continue
+		}
+		if lower == "-- down" || lower == "--down" {
+			hasMarkers = true
+			current = &downLines
+			continue
+		}
+		*current = append(*current, line)
+	}
+
+	_ = hasMarkers
+	return splitSQLBlock(strings.Join(upLines, "\n")),
+		splitSQLBlock(strings.Join(downLines, "\n"))
+}
+
+// splitSQLBlock splits a block of SQL text into individual statements.
+// When GO appears on its own line (case-insensitive) it is used as the
+// separator — required for stored procedures with internal semicolons.
+// Otherwise statements are split on semicolons and empty/comment lines dropped.
+func splitSQLBlock(content string) []string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	if hasGOSeparator(content) {
+		return splitOnGO(content)
+	}
+	return splitOnSemicolon(content)
+}
+
+func hasGOSeparator(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.ToUpper(strings.TrimSpace(line)) == "GO" {
+			return true
+		}
+	}
+	return false
+}
+
+func splitOnGO(content string) []string {
 	var stmts []string
-	for _, chunk := range strings.Split(string(content), ";") {
+	var cur strings.Builder
+	for _, line := range strings.Split(content, "\n") {
+		if strings.ToUpper(strings.TrimSpace(line)) == "GO" {
+			if stmt := strings.TrimSpace(cur.String()); stmt != "" {
+				stmts = append(stmts, stmt)
+			}
+			cur.Reset()
+		} else {
+			cur.WriteString(line)
+			cur.WriteRune('\n')
+		}
+	}
+	if stmt := strings.TrimSpace(cur.String()); stmt != "" {
+		stmts = append(stmts, stmt)
+	}
+	return stmts
+}
+
+func splitOnSemicolon(content string) []string {
+	var stmts []string
+	for _, chunk := range strings.Split(content, ";") {
 		var lines []string
 		for _, line := range strings.Split(chunk, "\n") {
 			trimmed := strings.TrimSpace(line)
@@ -164,8 +236,8 @@ func CreateMigrationFile(dir string, cfg Config, name string, format string) (st
 		format = "yaml"
 	}
 	format = strings.TrimPrefix(strings.ToLower(format), ".")
-	if format != "yaml" && format != "json" {
-		return "", fmt.Errorf("unsupported migration format %q", format)
+	if format != "yaml" && format != "json" && format != "sql" {
+		return "", fmt.Errorf("unsupported migration format %q (use yaml, json, or sql)", format)
 	}
 
 	migrationDir := filepath.Join(dir, cfg.Migration.Directory)
@@ -177,12 +249,15 @@ func CreateMigrationFile(dir string, cfg Config, name string, format string) (st
 	filename := fmt.Sprintf("%s_%s.%s", time.Now().Format("20060102150405"), cleanName, format)
 	path := filepath.Join(migrationDir, filename)
 
-	key, table, action := deriveScaffold(cleanName)
-
 	var content string
-	if format == "json" {
+	switch format {
+	case "sql":
+		content = sampleMigrationSQL(filename)
+	case "json":
+		key, table, action := deriveScaffold(cleanName)
 		content = sampleMigrationJSON(key, table, action)
-	} else {
+	default:
+		key, table, action := deriveScaffold(cleanName)
 		content = sampleMigrationYAML(filename, key, table, action)
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -457,4 +532,37 @@ func sampleMigrationJSON(key, table, action string) string {
   }
 }
 `, key, table, key, table)
+}
+
+func sampleMigrationSQL(filename string) string {
+	return fmt.Sprintf(`-- Migration: %s
+-- Plain SQL migration with up / down sections.
+--
+-- Use GO on its own line as the statement separator — required for stored
+-- procedures, functions, and triggers whose bodies contain semicolons.
+-- For simple DDL or data changes, semicolons work fine without GO.
+--
+-- Postgres example:
+--   CREATE OR REPLACE FUNCTION my_func() RETURNS VOID AS $$
+--   BEGIN
+--     UPDATE posts SET slug = LOWER(slug) WHERE slug IS NULL;
+--   END;
+--   $$ LANGUAGE plpgsql
+--   GO
+--
+-- MySQL / SQL Server example:
+--   CREATE PROCEDURE my_proc()
+--   BEGIN
+--     UPDATE posts SET slug = LOWER(slug) WHERE slug IS NULL;
+--   END
+--   GO
+
+-- up
+
+
+
+-- down
+
+
+`, filename)
 }

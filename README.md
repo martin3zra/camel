@@ -28,6 +28,7 @@ go install ./cmd/camel
 camel init                                    # create camel.yaml + database/
 camel make create_posts_table                 # scaffold a YAML migration
 camel make create_posts_table --format json   # scaffold a JSON migration
+camel make create_my_proc --format sql        # scaffold a SQL migration (procedures, functions, triggers)
 camel migrate --pretend                       # preview SQL without touching the DB
 camel migrate                       # apply pending migrations
 camel status                        # show applied / pending
@@ -142,7 +143,7 @@ See [DOCS.md](DOCS.md) for the full type and modifier reference, per-driver SQL 
 |---|---|
 | `camel init` | Create `camel.yaml` and the migrations directory |
 | `camel config` | Print resolved configuration |
-| `camel make <name> [--format yaml\|json]` | Scaffold a new migration file (YAML default) |
+| `camel make <name> [--format yaml\|json\|sql]` | Scaffold a new migration file (YAML default) |
 | `camel plan` | Print SQL for all pending migrations (alias for `migrate --pretend`) |
 | `camel migrate` | Apply all pending migrations |
 | `camel migrate --pretend` | Print SQL for pending migrations without executing |
@@ -185,6 +186,43 @@ Env vars: `DB_DRIVER` / `DATABASE_DRIVER`, `DB_SOURCE` / `DATABASE_URL`.
 | MySQL | `mysql` | RENAME COLUMN requires MySQL 8.0+ |
 | SQLite | `sqlite` | No ALTER COLUMN; FKs at create time only |
 | SQL Server | `mssql` | azure-sql-edge supported on arm64 |
+
+---
+
+## SQL migrations (procedures, functions, triggers)
+
+For anything the YAML DSL can't express — stored procedures, functions,
+triggers, complex views — scaffold a plain `.sql` file:
+
+```bash
+camel make create_backfill_proc --format sql
+```
+
+The generated file has `-- up` and `-- down` sections. Use `GO` on its own line
+as the statement separator when the body contains semicolons (required for
+stored procedures):
+
+```sql
+-- up
+CREATE PROCEDURE backfill_slugs()
+BEGIN
+  UPDATE posts SET slug = LOWER(title) WHERE slug IS NULL;
+END
+GO
+
+-- down
+DROP PROCEDURE IF EXISTS backfill_slugs
+GO
+```
+
+`camel migrate`, `camel rollback`, and `camel status` treat `.sql` files the
+same as `.yaml` files. The down section gives rollback a real inverse.
+
+For simple DDL without internal semicolons, `GO` is optional — the parser falls
+back to splitting on `;`.
+
+> `.sql` files are driver-specific. You own dialect correctness; Camel passes
+> statements through verbatim.
 
 ---
 
