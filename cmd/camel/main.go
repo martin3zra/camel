@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/martin3zra/camel"
 )
@@ -35,17 +36,15 @@ func main() {
 		}
 		fmt.Printf("%+v\n", cfg)
 	case "make", "create":
-		cmd := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
-		format := cmd.String("format", "yaml", "migration format: yaml or json")
-		_ = cmd.Parse(os.Args[2:])
-		if cmd.NArg() < 1 {
+		format, name := parseMakeArgs(os.Args[2:])
+		if name == "" {
 			log.Fatal("migration name is required")
 		}
 		cfg, err := camel.LoadConfig(dir)
 		if err != nil {
 			log.Fatal(err)
 		}
-		path, err := camel.CreateMigrationFile(dir, cfg, cmd.Arg(0), *format)
+		path, err := camel.CreateMigrationFile(dir, cfg, name, format)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -146,6 +145,32 @@ func runWithDB(dir string, fn func(*camel.Runner) error) {
 	if err := fn(runner); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// parseMakeArgs extracts the --format flag and migration name from args,
+// accepting them in any order (e.g. both `make name --format json` and
+// `make --format json name` work).
+func parseMakeArgs(args []string) (format, name string) {
+	format = "yaml"
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--format" || arg == "-format":
+			if i+1 < len(args) {
+				format = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(arg, "--format="):
+			format = strings.TrimPrefix(arg, "--format=")
+		case strings.HasPrefix(arg, "-format="):
+			format = strings.TrimPrefix(arg, "-format=")
+		case !strings.HasPrefix(arg, "-"):
+			if name == "" {
+				name = arg
+			}
+		}
+	}
+	return format, name
 }
 
 func usage() {

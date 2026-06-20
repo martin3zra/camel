@@ -25,9 +25,10 @@ go install ./cmd/camel
 ## Quick start
 
 ```bash
-camel init                          # create camel.yaml + database/
-camel make create_posts_table       # scaffold a migration file
-camel migrate --pretend             # preview SQL without touching the DB
+camel init                                    # create camel.yaml + database/
+camel make create_posts_table                 # scaffold a YAML migration
+camel make create_posts_table --format json   # scaffold a JSON migration
+camel migrate --pretend                       # preview SQL without touching the DB
 camel migrate                       # apply pending migrations
 camel status                        # show applied / pending
 camel rollback                      # reverse the last batch
@@ -141,7 +142,7 @@ See [DOCS.md](DOCS.md) for the full type and modifier reference, per-driver SQL 
 |---|---|
 | `camel init` | Create `camel.yaml` and the migrations directory |
 | `camel config` | Print resolved configuration |
-| `camel make <name>` | Scaffold a new migration file |
+| `camel make <name> [--format yaml\|json]` | Scaffold a new migration file (YAML default) |
 | `camel plan` | Print SQL for all pending migrations (alias for `migrate --pretend`) |
 | `camel migrate` | Apply all pending migrations |
 | `camel migrate --pretend` | Print SQL for pending migrations without executing |
