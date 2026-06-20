@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Camel — database migrations" width="720"/>
+</p>
+
 # Camel
 
 Explicit database migrations you can actually read.
