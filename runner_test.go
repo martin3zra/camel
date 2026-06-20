@@ -473,6 +473,111 @@ down:
 	}
 }
 
+func TestDumpWritesSchemaSQL(t *testing.T) {
+	runner, migDir := sqliteRunner(t)
+	writeMigration(t, migDir, "20240101_posts.yaml", createPosts)
+	if err := runner.Migrate(false); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	if err := runner.Dump(false); err != nil {
+		t.Fatalf("Dump: %v", err)
+	}
+
+	// schema.sql written at project root (runner.Dir)
+	schemaPath := filepath.Join(runner.Dir, "schema.sql")
+	content, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("schema.sql not written: %v", err)
+	}
+	if len(content) == 0 {
+		t.Fatal("schema.sql is empty")
+	}
+
+	// Migration files and tracking table must be untouched
+	if !tableExists(t, runner.DB, "posts") {
+		t.Error("posts table should still exist after dump")
+	}
+	applied, _ := runner.applied()
+	if !applied["20240101_posts.yaml"] {
+		t.Error("tracking record must survive a plain dump")
+	}
+}
+
+func TestDumpPruneSquashesAppliedMigrations(t *testing.T) {
+	runner, migDir := sqliteRunner(t)
+	writeMigration(t, migDir, "20240101_posts.yaml", createPosts)
+	writeMigration(t, migDir, "20240102_users.yaml", createUsers)
+	if err := runner.Migrate(false); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// Add a pending migration that must survive prune.
+	writeMigration(t, migDir, "20240103_comments.yaml", createUsersAs("comment", "comments"))
+
+	if err := runner.Dump(true); err != nil {
+		t.Fatalf("Dump --prune: %v", err)
+	}
+
+	// Applied migration files deleted.
+	if _, err := os.Stat(filepath.Join(migDir, "20240101_posts.yaml")); err == nil {
+		t.Error("applied migration should be deleted after prune")
+	}
+	if _, err := os.Stat(filepath.Join(migDir, "20240102_users.yaml")); err == nil {
+		t.Error("applied migration should be deleted after prune")
+	}
+
+	// Pending migration survives.
+	if _, err := os.Stat(filepath.Join(migDir, "20240103_comments.yaml")); err != nil {
+		t.Errorf("pending migration must survive prune: %v", err)
+	}
+
+	// Dump SQL file written into migrations directory.
+	dumpPath := filepath.Join(migDir, schemaDumpFile)
+	if _, err := os.Stat(dumpPath); err != nil {
+		t.Fatalf("schema dump SQL file not created: %v", err)
+	}
+
+	// Tracking table reset: only the dump is recorded.
+	applied, _ := runner.applied()
+	if !applied[schemaDumpFile] {
+		t.Error("schema dump must be recorded as applied")
+	}
+	if applied["20240101_posts.yaml"] || applied["20240102_users.yaml"] {
+		t.Error("old migration records must be cleared after prune")
+	}
+}
+
+func TestDumpPruneFreshDBRunsDumpFile(t *testing.T) {
+	// After prune, a second runner on an empty DB should apply the dump file
+	// and end up with the same schema — no special detection required.
+	runner, migDir := sqliteRunner(t)
+	writeMigration(t, migDir, "20240101_posts.yaml", createPosts)
+	if err := runner.Migrate(false); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := runner.Dump(true); err != nil {
+		t.Fatalf("Dump --prune: %v", err)
+	}
+	runner.Close()
+
+	// Fresh DB in the same migrations directory.
+	cfg := DefaultConfig()
+	cfg.DB.Driver = "sqlite"
+	cfg.DB.Source = filepath.Join(runner.Dir, "fresh.sqlite")
+	fresh, err := NewRunner(cfg, runner.Dir)
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	defer fresh.Close()
+
+	if err := fresh.Migrate(false); err != nil {
+		t.Fatalf("migrate fresh DB: %v", err)
+	}
+	if !tableExists(t, fresh.DB, "posts") {
+		t.Error("posts table must exist on fresh DB after applying dump")
+	}
+}
+
 // createUsersAs returns a create-migration body for an arbitrary key/table so
 // tests can add distinct unapplied migrations.
 func createUsersAs(key, table string) string {

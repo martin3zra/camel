@@ -9,6 +9,9 @@ main.go.bak
 *.sqlite
 *.db
 
+# Stray migration directory at repo root (migrations live in database/)
+/database/
+
 # Go cache (pinned in Makefile for sandbox)
 .gocache/
 

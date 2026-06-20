@@ -151,6 +151,8 @@ See [DOCS.md](DOCS.md) for the full type and modifier reference, per-driver SQL 
 | `camel rollback --all` | Reverse every applied migration |
 | `camel reset` | Roll everything back (alias for `rollback --all`) |
 | `camel status` | List all migrations with applied / pending state |
+| `camel dump` | Write current schema to `schema.sql` (human reference) |
+| `camel dump --prune` | Squash applied migrations into a single SQL file |
 
 ---
 
@@ -183,6 +185,38 @@ Env vars: `DB_DRIVER` / `DATABASE_DRIVER`, `DB_SOURCE` / `DATABASE_URL`.
 | MySQL | `mysql` | RENAME COLUMN requires MySQL 8.0+ |
 | SQLite | `sqlite` | No ALTER COLUMN; FKs at create time only |
 | SQL Server | `mssql` | azure-sql-edge supported on arm64 |
+
+---
+
+## Squashing migrations
+
+As a project matures, the `database/` directory can accumulate hundreds of
+migration files. `camel dump` condenses them:
+
+```bash
+# Write a human-readable schema.sql at the project root (no files changed).
+camel dump
+
+# Squash: delete applied migration files, replace with a single SQL file,
+# keep any pending migrations untouched.
+camel dump --prune
+```
+
+After `--prune` the migrations directory contains:
+
+```
+database/
+├── 00000000000000_schema_dump.sql   ← full schema, runs first on a fresh DB
+└── 20261220_add_something.yaml      ← any migrations applied after the dump
+```
+
+On a fresh database `camel migrate` loads `00000000000000_schema_dump.sql`
+automatically — no extra commands needed. The dump file sorts before any
+timestamp-prefixed migration, so the schema is always applied first.
+
+> The generated SQL is dialect-specific. Commit `schema.sql` as a reference and
+> the dump file as a migration, but note that switching drivers after a prune
+> requires regenerating the dump against the new database.
 
 ---
 

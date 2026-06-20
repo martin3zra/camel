@@ -51,6 +51,80 @@ func TestLoadMigrationYAMLAndJSON(t *testing.T) {
 	}
 }
 
+func TestLoadMigrationSQL(t *testing.T) {
+	dir := t.TempDir()
+	content := `-- Camel schema dump
+-- Driver: sqlite
+
+CREATE TABLE "posts" (
+  "id" INTEGER NOT NULL PRIMARY KEY
+);
+CREATE UNIQUE INDEX "posts_slug_uq" ON "posts" ("slug");
+`
+	path := filepath.Join(dir, "00000000000000_schema_dump.sql")
+	mustWrite(t, path, content)
+
+	m, err := LoadMigration(path)
+	if err != nil {
+		t.Fatalf("LoadMigration: %v", err)
+	}
+	intent, ok := m.File.Up["schema"]
+	if !ok {
+		t.Fatal("expected up.schema intent")
+	}
+	if intent.Action != "raw" {
+		t.Fatalf("expected action raw, got %q", intent.Action)
+	}
+	if len(intent.Statements) != 2 {
+		t.Fatalf("want 2 statements (comments stripped), got %d: %v", len(intent.Statements), intent.Statements)
+	}
+	if len(m.File.Down) != 0 {
+		t.Fatal(".sql files must have an empty down block")
+	}
+}
+
+func TestListMigrationsPicksUpSQLFiles(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{Migration: MigrationConfig{Directory: "db", Pattern: "*.yaml"}}
+	os.MkdirAll(filepath.Join(dir, "db"), 0755)
+
+	mustWrite(t, filepath.Join(dir, "db", "00000000000000_schema_dump.sql"), "CREATE TABLE x (id INTEGER);\n")
+	mustWrite(t, filepath.Join(dir, "db", "20260101_add_y.yaml"), sampleYAML)
+
+	migrations, err := ListMigrations(cfg, dir)
+	if err != nil {
+		t.Fatalf("ListMigrations: %v", err)
+	}
+	if len(migrations) != 2 {
+		t.Fatalf("want 2 migrations, got %d", len(migrations))
+	}
+	// .sql file sorts before the yaml (00000... < 20260...)
+	if migrations[0].Name != "00000000000000_schema_dump.sql" {
+		t.Fatalf("expected dump first, got %q", migrations[0].Name)
+	}
+}
+
+func TestParseSQLStatements(t *testing.T) {
+	content := []byte(`-- header comment
+-- another comment
+
+CREATE TABLE "posts" ("id" INTEGER NOT NULL PRIMARY KEY);
+
+CREATE UNIQUE INDEX "posts_slug_uq" ON "posts" ("slug");
+
+`)
+	stmts := parseSQLStatements(content)
+	if len(stmts) != 2 {
+		t.Fatalf("want 2 statements, got %d: %v", len(stmts), stmts)
+	}
+	if !strings.Contains(stmts[0], "CREATE TABLE") {
+		t.Errorf("first stmt should be CREATE TABLE: %s", stmts[0])
+	}
+	if !strings.Contains(stmts[1], "CREATE UNIQUE INDEX") {
+		t.Errorf("second stmt should be CREATE UNIQUE INDEX: %s", stmts[1])
+	}
+}
+
 func TestStatementsForUpAndDown(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "1_create.yaml")

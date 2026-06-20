@@ -3,15 +3,21 @@ package camel
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	_ "github.com/microsoft/go-mssqldb"
 	_ "modernc.org/sqlite"
 )
+
+// schemaDumpFile is the migration filename written by camel dump --prune. It
+// sorts before any timestamp-prefixed migration so it runs first on a fresh DB.
+const schemaDumpFile = "00000000000000_schema_dump.sql"
 
 type Runner struct {
 	Config Config
@@ -189,6 +195,101 @@ func selectRollbackTargets(applied []AppliedMigration, opts RollbackOptions) []A
 		targets = append(targets, m)
 	}
 	return targets
+}
+
+// Dump writes the SQL for all applied migrations to schema.sql at the project
+// root. With prune=true it also squashes: applied migration files are deleted,
+// a 00000000000000_schema_dump.sql is written into the migrations directory
+// (so `camel migrate` on a fresh DB runs it automatically), and the tracking
+// table is reset so only the dump is recorded as applied.
+func (r *Runner) Dump(prune bool) error {
+	if err := r.EnsureRepository(); err != nil {
+		return err
+	}
+
+	migrations, err := ListMigrations(r.Config, r.Dir)
+	if err != nil {
+		return err
+	}
+	appliedSet, err := r.applied()
+	if err != nil {
+		return err
+	}
+
+	// Collect SQL from applied migrations in chronological order, skipping any
+	// previous dump file so we don't double-include it.
+	var allStatements []string
+	for _, migration := range migrations {
+		if migration.Name == schemaDumpFile || !appliedSet[migration.Name] {
+			continue
+		}
+		stmts, err := StatementsFor(migration, DirectionUp, r.Config.DB.Driver)
+		if err != nil {
+			return err
+		}
+		allStatements = append(allStatements, stmts...)
+	}
+
+	// Write schema.sql at the project root — human-readable reference.
+	schemaPath := filepath.Join(r.Dir, "schema.sql")
+	if err := os.WriteFile(schemaPath, []byte(schemaSQL(allStatements, r.Config.DB.Driver, false)), 0644); err != nil {
+		return err
+	}
+	fmt.Println("Schema written to schema.sql")
+
+	if !prune {
+		return nil
+	}
+
+	migDir := filepath.Join(r.Dir, r.Config.Migration.Directory)
+
+	// Delete applied migration files; keep pending ones.
+	var deleted int
+	for _, migration := range migrations {
+		if migration.Name == schemaDumpFile || !appliedSet[migration.Name] {
+			continue
+		}
+		if err := os.Remove(migration.Path); err != nil {
+			return fmt.Errorf("prune %s: %w", migration.Name, err)
+		}
+		deleted++
+	}
+
+	// Write the schema dump as a plain SQL migration so `camel migrate` on a
+	// fresh DB applies it automatically without any special detection.
+	dumpPath := filepath.Join(migDir, schemaDumpFile)
+	if err := os.WriteFile(dumpPath, []byte(schemaSQL(allStatements, r.Config.DB.Driver, true)), 0644); err != nil {
+		return err
+	}
+
+	// Reset tracking: clear all records, mark only the dump as applied.
+	if _, err := r.DB.Exec(fmt.Sprintf("DELETE FROM %s", quoteIdent(r.Config.DB.Driver, r.Config.Migration.Table))); err != nil {
+		return err
+	}
+	if err := r.record(schemaDumpFile, 1); err != nil {
+		return err
+	}
+
+	fmt.Printf("Pruned %d migration file(s) → %s\n", deleted, schemaDumpFile)
+	return nil
+}
+
+func schemaSQL(statements []string, driver string, forMigration bool) string {
+	var b strings.Builder
+	b.WriteString("-- Camel schema dump\n")
+	fmt.Fprintf(&b, "-- Driver:    %s\n", driver)
+	fmt.Fprintf(&b, "-- Generated: %s\n", time.Now().UTC().Format("2006-01-02 15:04:05 UTC"))
+	if forMigration {
+		b.WriteString("-- Applied automatically by `camel migrate` on a fresh database.\n")
+	} else {
+		b.WriteString("-- Human reference. Run `camel dump --prune` to squash migrations.\n")
+	}
+	b.WriteString("\n")
+	for _, stmt := range statements {
+		b.WriteString(stmt)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func (r *Runner) Status() ([]MigrationStatus, error) {

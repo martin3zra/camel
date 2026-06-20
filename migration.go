@@ -80,7 +80,17 @@ func LoadMigration(path string) (Migration, error) {
 	var file MigrationFile
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".json":
-		err = json.Unmarshal(content, &file)
+		err = yaml.Unmarshal(content, &file)
+		if err != nil {
+			err = json.Unmarshal(content, &file)
+		}
+	case ".sql":
+		stmts := parseSQLStatements(content)
+		file.Up = map[string]TableIntent{
+			"schema": {Action: "raw", Statements: stmts},
+		}
+		// .sql files are up-only; rollback is a no-op
+		file.Down = map[string]TableIntent{}
 	default:
 		err = yaml.Unmarshal(content, &file)
 	}
@@ -89,6 +99,27 @@ func LoadMigration(path string) (Migration, error) {
 	}
 
 	return Migration{Path: path, Name: filepath.Base(path), File: file}, nil
+}
+
+// parseSQLStatements splits a .sql file into individual statements by
+// semicolon, stripping blank lines and -- comments. Sufficient for schema
+// dumps (CREATE TABLE / CREATE INDEX); not intended for stored procedures.
+func parseSQLStatements(content []byte) []string {
+	var stmts []string
+	for _, chunk := range strings.Split(string(content), ";") {
+		var lines []string
+		for _, line := range strings.Split(chunk, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+				continue
+			}
+			lines = append(lines, line)
+		}
+		if stmt := strings.TrimSpace(strings.Join(lines, "\n")); stmt != "" {
+			stmts = append(stmts, stmt+";")
+		}
+	}
+	return stmts
 }
 
 func ListMigrations(cfg Config, dir string) ([]Migration, error) {
@@ -105,6 +136,13 @@ func ListMigrations(cfg Config, dir string) ([]Migration, error) {
 		}
 		paths = append(paths, jsonPaths...)
 	}
+	// Always pick up plain .sql files from the migrations directory so schema
+	// dumps (00000000000000_schema_dump.sql) are applied on fresh databases.
+	sqlPaths, err := filepath.Glob(filepath.Join(dir, cfg.Migration.Directory, "*.sql"))
+	if err != nil {
+		return nil, err
+	}
+	paths = append(paths, sqlPaths...)
 	sort.Strings(paths)
 
 	migrations := make([]Migration, 0, len(paths))

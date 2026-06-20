@@ -100,6 +100,13 @@ func main() {
 		runWithDB(dir, func(r *camel.Runner) error {
 			return r.Reset(*pretend)
 		})
+	case "dump":
+		cmd := flag.NewFlagSet("dump", flag.ExitOnError)
+		prune := cmd.Bool("prune", false, "delete applied migration files after dumping")
+		_ = cmd.Parse(os.Args[2:])
+		runWithDB(dir, func(r *camel.Runner) error {
+			return r.Dump(*prune)
+		})
 	case "status":
 		runWithDB(dir, func(r *camel.Runner) error {
 			statuses, err := r.Status()
@@ -183,4 +190,5 @@ func usage() {
 	fmt.Println("  camel rollback [--step N] [--all] [--pretend]")
 	fmt.Println("  camel reset [--pretend]")
 	fmt.Println("  camel status")
+	fmt.Println("  camel dump [--prune]")
 }

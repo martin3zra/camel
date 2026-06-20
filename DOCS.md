@@ -179,6 +179,31 @@ so a referenced table comes first (and drops them in reverse on rollback).
 
 ---
 
+## Schema dump & squashing
+
+`camel dump` generates a `schema.sql` file at the project root containing the
+SQL for every applied migration in order. Useful as a human-readable snapshot.
+
+`camel dump --prune` squashes: it deletes applied migration files and writes
+`database/00000000000000_schema_dump.sql` — a plain SQL migration that Camel
+loads automatically on a fresh database. Any pending (unapplied) migration files
+are left untouched so they can still be applied on top.
+
+```bash
+camel dump           # writes schema.sql (no files deleted)
+camel dump --prune   # squashes applied migrations into one SQL file
+```
+
+**The generated SQL is driver-specific.** If you switch drivers after a prune,
+regenerate the dump against the new database type.
+
+**`.sql` files as migrations.** Camel picks up any `.sql` file in the migrations
+directory alongside `.yaml`/`.json`. Each `.sql` file is treated as an
+up-only migration (raw statements, no down block). Splitting is on `;` — fine
+for DDL but not for stored procedures with internal semicolons.
+
+---
+
 ## Laravel parity
 
 Camel borrows Laravel/Blueprint's type vocabulary but implements a deliberately
