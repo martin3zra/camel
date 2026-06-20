@@ -2,26 +2,19 @@
 
 Explicit database migrations you can actually read.
 
-Camel is a lightweight Go CLI for teams who want migrations they write, review, and trust — not magic that diffs your database. You declare small intentions in YAML or JSON; Camel turns them into correct SQL for **Postgres, MySQL, SQLite, and SQL Server**.
+Camel is a lightweight CLI for teams who want migrations they write, review, and
+trust — not magic that diffs your database. You declare small intentions in YAML
+or JSON; Camel turns them into correct SQL for **Postgres, MySQL, SQLite, and
+SQL Server**. No framework. No ORM. No surprises.
 
 ---
 
 ## Install
 
-### Download a pre-built binary
+### macOS
 
-Go to the [Releases page](https://github.com/martin3zra/camel/releases) and
-download the binary for your OS:
-
-| OS | File |
-|---|---|
-| macOS — Apple Silicon (M1/M2/M3) | `camel-darwin-arm64` |
-| macOS — Intel | `camel-darwin-amd64` |
-| Linux — x86-64 | `camel-linux-amd64` |
-| Linux — ARM64 | `camel-linux-arm64` |
-| Windows — x86-64 | `camel-windows-amd64.exe` |
-
-**macOS / Linux** — make it executable and move it to your PATH:
+Download `camel-darwin-arm64` (Apple Silicon) or `camel-darwin-amd64` (Intel)
+from the [Releases page](https://github.com/martin3zra/camel/releases), then:
 
 ```bash
 chmod +x camel-darwin-arm64
@@ -29,9 +22,32 @@ sudo mv camel-darwin-arm64 /usr/local/bin/camel
 camel init
 ```
 
-**Windows** — rename the file to `camel.exe` and add its folder to your `PATH`.
+### Linux
 
-A `checksums.txt` file is included in each release to verify the download.
+Download `camel-linux-amd64` or `camel-linux-arm64`, then:
+
+```bash
+chmod +x camel-linux-amd64
+sudo mv camel-linux-amd64 /usr/local/bin/camel
+camel init
+```
+
+### Windows
+
+1. Download `camel-windows-amd64.exe` from the [Releases page](https://github.com/martin3zra/camel/releases).
+2. Open **PowerShell as Administrator** and run:
+
+```powershell
+mkdir C:\tools
+Move-Item "$HOME\Downloads\camel-windows-amd64.exe" C:\tools\camel.exe
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\tools", "Machine")
+```
+
+3. Close and reopen PowerShell, then verify:
+
+```powershell
+camel
+```
 
 ### Install with Go (requires Go 1.22+)
 
@@ -47,26 +63,31 @@ cd camel
 go install ./cmd/camel
 ```
 
+A `checksums.txt` is included in each release to verify your download.
+
 ---
 
 ## Quick start
 
+No server needed — SQLite works out of the box for local development.
+
 ```bash
-camel init                                    # create camel.yaml + database/
-camel make create_posts_table                 # scaffold a YAML migration
-camel make create_posts_table --format json   # scaffold a JSON migration
-camel make create_my_proc --format sql        # scaffold a SQL migration (procedures, functions, triggers)
-camel migrate --pretend                       # preview SQL without touching the DB
-camel migrate                       # apply pending migrations
+mkdir myproject && cd myproject
+camel init                          # creates camel.yaml + database/
+camel config                        # confirm driver=sqlite, source=camel.sqlite
+camel make create_posts_table       # scaffold a migration
+camel migrate --pretend             # preview SQL without touching the DB
+camel migrate                       # apply
 camel status                        # show applied / pending
 camel rollback                      # reverse the last batch
 ```
 
+Switch to Postgres, MySQL, or SQL Server by editing `camel.yaml` — the same
+migration files run unchanged on every driver.
+
 ---
 
 ## Migration format
-
-Migrations are YAML (or JSON) files. The name tells Camel what to scaffold.
 
 ### Create a table
 
@@ -83,10 +104,6 @@ up:
       status: enum:draft,published default:'draft'
       created_at: timestamp useCurrent
       updated_at: timestamp nullable
-    indexes:
-      - name: posts_slug_uq
-        columns: [slug]
-        unique: true
 
 down:
   post:
@@ -126,7 +143,45 @@ down:
     drop_columns: [view_count]
 ```
 
+### Foreign keys across tables
+
+Put both tables in one migration file. Camel reads the FK dependencies and
+creates tables in the right order automatically — and drops them in reverse on
+rollback, so SQL Server's FK enforcement never blocks a reset.
+
+```yaml
+up:
+  user:
+    action: create
+    table: users
+    columns:
+      id: id
+      email: string:255 unique
+  post:
+    action: create
+    table: posts
+    columns:
+      id: id
+      author_id: bigInteger
+    foreign:
+      - name: posts_author_fk
+        columns: [author_id]
+        references_table: users
+        references_columns: [id]
+        on_delete: cascade
+
+down:
+  post:
+    action: drop
+    table: posts
+  user:
+    action: drop
+    table: users
+```
+
 ### Raw SQL (escape hatch)
+
+For data migrations, CHECK constraints, or anything the DSL doesn't cover:
 
 ```yaml
 up:
@@ -160,59 +215,8 @@ status: enum:draft,published default:'draft'
 created_at: timestamp useCurrent
 ```
 
-See [DOCS.md](DOCS.md) for the full type and modifier reference, per-driver SQL output, and driver-specific behavior.
-
----
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `camel init` | Create `camel.yaml` and the migrations directory |
-| `camel config` | Print resolved configuration |
-| `camel make <name> [--format yaml\|json\|sql]` | Scaffold a new migration file (YAML default) |
-| `camel plan` | Print SQL for all pending migrations (alias for `migrate --pretend`) |
-| `camel migrate` | Apply all pending migrations |
-| `camel migrate --pretend` | Print SQL for pending migrations without executing |
-| `camel rollback` | Reverse the last batch |
-| `camel rollback --step N` | Reverse the last N migrations |
-| `camel rollback --all` | Reverse every applied migration |
-| `camel reset` | Roll everything back (alias for `rollback --all`) |
-| `camel status` | List all migrations with applied / pending state |
-| `camel dump` | Write current schema to `schema.sql` (human reference) |
-| `camel dump --prune` | Squash applied migrations into a single SQL file |
-
----
-
-## Configuration
-
-`camel.yaml` (or `.json`) in the project root:
-
-```yaml
-db:
-  driver: "postgres"   # postgres | mysql | sqlite | mssql
-  source: "postgres://localhost:5432/mydb?sslmode=disable"
-
-migration:
-  directory: "database"
-  pattern: "*.yaml"
-  table: "camel_migrations"
-```
-
-Precedence (highest first): process env → `.env` file → `camel.yaml` → built-in defaults.
-
-Env vars: `DB_DRIVER` / `DATABASE_DRIVER`, `DB_SOURCE` / `DATABASE_URL`.
-
----
-
-## Supported drivers
-
-| Driver | `driver` value | Notes |
-|---|---|---|
-| PostgreSQL | `postgres` | |
-| MySQL | `mysql` | RENAME COLUMN requires MySQL 8.0+ |
-| SQLite | `sqlite` | No ALTER COLUMN; FKs at create time only |
-| SQL Server | `mssql` | azure-sql-edge supported on arm64 |
+See [DOCS.md](DOCS.md) for the full type and modifier reference, per-driver SQL
+output, and driver-specific behavior.
 
 ---
 
@@ -226,8 +230,7 @@ camel make create_backfill_proc --format sql
 ```
 
 The generated file has `-- up` and `-- down` sections. Use `GO` on its own line
-as the statement separator when the body contains semicolons (required for
-stored procedures):
+as the statement separator when the body contains semicolons:
 
 ```sql
 -- up
@@ -243,10 +246,7 @@ GO
 ```
 
 `camel migrate`, `camel rollback`, and `camel status` treat `.sql` files the
-same as `.yaml` files. The down section gives rollback a real inverse.
-
-For simple DDL without internal semicolons, `GO` is optional — the parser falls
-back to splitting on `;`.
+same as `.yaml` files. The `-- down` section gives rollback a real inverse.
 
 > `.sql` files are driver-specific. You own dialect correctness; Camel passes
 > statements through verbatim.
@@ -256,41 +256,104 @@ back to splitting on `;`.
 ## Squashing migrations
 
 As a project matures, the `database/` directory can accumulate hundreds of
-migration files. `camel dump` condenses them:
+files. `camel dump` condenses them:
 
 ```bash
-# Write a human-readable schema.sql at the project root (no files changed).
-camel dump
-
-# Squash: delete applied migration files, replace with a single SQL file,
-# keep any pending migrations untouched.
-camel dump --prune
+camel dump           # write schema.sql at the project root (reference only)
+camel dump --prune   # squash applied migrations into one SQL file
 ```
 
-After `--prune` the migrations directory contains:
+After `--prune`:
 
 ```
 database/
-├── 00000000000000_schema_dump.sql   ← full schema, runs first on a fresh DB
-└── 20261220_add_something.yaml      ← any migrations applied after the dump
+├── 00000000000000_schema_dump.sql   ← full schema, applied first on a fresh DB
+└── 20261220_add_something.yaml      ← pending migrations survive untouched
 ```
 
-On a fresh database `camel migrate` loads `00000000000000_schema_dump.sql`
-automatically — no extra commands needed. The dump file sorts before any
-timestamp-prefixed migration, so the schema is always applied first.
+On a fresh database `camel migrate` picks up `00000000000000_schema_dump.sql`
+automatically — no extra commands needed.
 
-> The generated SQL is dialect-specific. Commit `schema.sql` as a reference and
-> the dump file as a migration, but note that switching drivers after a prune
-> requires regenerating the dump against the new database.
+> The generated SQL is dialect-specific. Regenerate the dump if you switch
+> database drivers.
+
+---
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `camel init` | Create `camel.yaml` and the migrations directory |
+| `camel config` | Print resolved configuration |
+| `camel make <name> [--format yaml\|json\|sql]` | Scaffold a migration file |
+| `camel plan` | Preview SQL for all pending migrations |
+| `camel migrate` | Apply all pending migrations |
+| `camel migrate --pretend` | Preview SQL without touching the DB |
+| `camel rollback` | Reverse the last batch |
+| `camel rollback --step N` | Reverse the last N migrations |
+| `camel rollback --all` | Reverse every applied migration |
+| `camel reset` | Roll everything back |
+| `camel status` | List migrations with applied / pending state |
+| `camel dump` | Write current schema to `schema.sql` |
+| `camel dump --prune` | Squash applied migrations into one SQL file |
+
+---
+
+## Configuration
+
+`camel.yaml` in the project root:
+
+```yaml
+db:
+  driver: "sqlite"     # postgres | mysql | sqlite | mssql
+  source: "camel.sqlite"
+
+migration:
+  directory: "database"
+  pattern: "*.yaml"
+  table: "camel_migrations"
+```
+
+**Precedence** (highest first): process env → `.env` file → `camel.yaml` → defaults.
+
+**Environment variables**: `DB_DRIVER` / `DATABASE_DRIVER`, `DB_SOURCE` / `DATABASE_URL`.
+
+### Connection strings
+
+```yaml
+# PostgreSQL
+source: "postgres://user:password@localhost:5432/mydb?sslmode=disable"
+
+# MySQL
+source: "user:password@tcp(localhost:3306)/mydb?parseTime=true"
+
+# SQL Server
+source: "sqlserver://sa:Password@localhost:1433?database=mydb&encrypt=disable&TrustServerCertificate=true"
+
+# SQLite
+source: "mydb.sqlite"
+```
+
+---
+
+## Supported drivers
+
+| Driver | `driver` value | Notes |
+|---|---|---|
+| PostgreSQL | `postgres` | |
+| MySQL | `mysql` | `RENAME COLUMN` requires MySQL 8.0+ |
+| SQLite | `sqlite` | No `ALTER COLUMN`; FKs declared at create time |
+| SQL Server | `mssql` | `azure-sql-edge` supported on ARM64 |
 
 ---
 
 ## Why explicit migrations
 
-- **No surprises** — Camel only runs files you wrote. It never diffs your live database.
-- **Reviewable** — a migration is a few lines of intent, readable in a PR.
-- **Portable** — one file produces correct SQL on all four drivers, including FK ordering and driver quirks handled automatically.
+- **No surprises** — Camel runs the files you wrote. It never diffs your live database or generates migrations behind your back.
+- **Reviewable** — a migration is a few lines of intent, readable and diff-friendly in PRs.
+- **Portable** — one file, correct SQL on all four drivers. FK ordering, unique index splitting, and driver quirks are handled automatically.
 - **Transactional** — each migration is all-or-nothing. A failure rolls back and is never recorded as applied.
+- **Full lifecycle** — schema, data, procedures, functions, triggers — all versioned in the same migrations directory.
 
 ---
 
