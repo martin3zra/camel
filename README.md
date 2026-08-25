@@ -293,6 +293,7 @@ automatically — no extra commands needed.
 | `camel plan` | Preview SQL for all pending migrations |
 | `camel migrate` | Apply all pending migrations |
 | `camel migrate --pretend` | Preview SQL without touching the DB |
+| `camel migrate --dry-run` | Run pending migrations for real against the configured DB, in a transaction that's always rolled back — catches state-dependent failures (existing column, NOT NULL add on a non-empty table, missing FK target) that `--pretend` can't see. Refuses on MySQL, whose DDL auto-commits and can't be rolled back. |
 | `camel rollback` | Reverse the last batch |
 | `camel rollback --step N` | Reverse the last N migrations |
 | `camel rollback --all` | Reverse every applied migration |

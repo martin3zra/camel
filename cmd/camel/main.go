@@ -80,8 +80,15 @@ func main() {
 	case "migrate":
 		cmd := flag.NewFlagSet("migrate", flag.ExitOnError)
 		pretend := cmd.Bool("pretend", false, "print SQL without executing")
+		dryRun := cmd.Bool("dry-run", false, "run pending migrations against the real database inside a rolled-back transaction; nothing is committed or recorded")
 		_ = cmd.Parse(os.Args[2:])
+		if *pretend && *dryRun {
+			log.Fatal("--pretend and --dry-run are mutually exclusive")
+		}
 		runWithDB(dir, func(r *camel.Runner) error {
+			if *dryRun {
+				return r.MigrateDryRun()
+			}
 			return r.Migrate(*pretend)
 		})
 	case "rollback":
@@ -107,6 +114,24 @@ func main() {
 		runWithDB(dir, func(r *camel.Runner) error {
 			return r.Dump(*prune)
 		})
+	case "skill":
+		if len(os.Args) < 3 || os.Args[2] != "install" {
+			usage()
+			os.Exit(1)
+		}
+		cmd := flag.NewFlagSet("skill install", flag.ExitOnError)
+		force := cmd.Bool("force", false, "overwrite existing skill files")
+		_ = cmd.Parse(os.Args[3:])
+		written, skipped, err := camel.InstallDBScaffoldSkill(dir, *force)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, path := range written {
+			fmt.Printf("Installed %s\n", path)
+		}
+		for _, path := range skipped {
+			fmt.Printf("Skipped %s (already exists, use --force to overwrite)\n", path)
+		}
 	case "status":
 		runWithDB(dir, func(r *camel.Runner) error {
 			statuses, err := r.Status()
@@ -186,9 +211,10 @@ func usage() {
 	fmt.Println("  camel config")
 	fmt.Println("  camel make <name> [--format yaml|json|sql]")
 	fmt.Println("  camel plan [--file path] [--direction up|down]")
-	fmt.Println("  camel migrate [--pretend]")
+	fmt.Println("  camel migrate [--pretend] [--dry-run]")
 	fmt.Println("  camel rollback [--step N] [--all] [--pretend]")
 	fmt.Println("  camel reset [--pretend]")
 	fmt.Println("  camel status")
 	fmt.Println("  camel dump [--prune]")
+	fmt.Println("  camel skill install [--force]")
 }

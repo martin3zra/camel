@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -155,6 +156,123 @@ func TestRunnerMigratePretendSkipsApplied(t *testing.T) {
 	}
 	if applied["20240102_users.yaml"] {
 		t.Fatal("pretend must not record the pending migration")
+	}
+}
+
+func TestRunnerMigrateDryRunDoesNotCommit(t *testing.T) {
+	runner, migDir := sqliteRunner(t)
+	writeMigration(t, migDir, "20240101_posts.yaml", createPosts)
+
+	if err := runner.MigrateDryRun(); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if tableExists(t, runner.DB, "posts") {
+		t.Fatal("dry run must not leave the table committed")
+	}
+	applied, err := runner.applied()
+	if err != nil {
+		t.Fatalf("applied: %v", err)
+	}
+	if applied["20240101_posts.yaml"] {
+		t.Fatal("dry run must not record the migration as applied")
+	}
+}
+
+func TestRunnerMigrateDryRunSeesEarlierPendingMigrationInSameBatch(t *testing.T) {
+	const createFoo = `up:
+  foo:
+    action: create
+    table: foo
+    columns:
+      id: id
+down:
+  foo:
+    action: drop
+    table: foo
+`
+	const alterFooAddBar = `up:
+  foo:
+    action: alter
+    table: foo
+    add_columns:
+      bar: string:50 nullable
+down:
+  foo:
+    action: alter
+    table: foo
+    drop_columns: [bar]
+`
+	runner, migDir := sqliteRunner(t)
+	writeMigration(t, migDir, "20240101_foo.yaml", createFoo)
+	writeMigration(t, migDir, "20240102_alter_foo.yaml", alterFooAddBar)
+
+	// alter_foo targets a table only created by the migration before it in
+	// the same pending batch — this only succeeds if both run on one shared
+	// transaction rather than each getting its own (and being rolled back
+	// before the next one runs).
+	if err := runner.MigrateDryRun(); err != nil {
+		t.Fatalf("dry run should see the create from earlier in the same pending batch: %v", err)
+	}
+}
+
+func TestRunnerMigrateDryRunCatchesStateDependentFailure(t *testing.T) {
+	const addRequiredStatus = `up:
+  posts:
+    action: alter
+    table: posts
+    add_columns:
+      status: string:20
+down:
+  posts:
+    action: alter
+    table: posts
+    drop_columns: [status]
+`
+	runner, migDir := sqliteRunner(t)
+	writeMigration(t, migDir, "20240101_posts.yaml", createPosts)
+	if err := runner.Migrate(false); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := runner.DB.Exec(`INSERT INTO posts (title) VALUES ('a')`); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+
+	// Adding a NOT NULL column with no default to a table that already has
+	// rows is invisible to camel plan (pure SQL generation, no DB) but fails
+	// for real on sqlite — exactly what dry-run exists to catch.
+	writeMigration(t, migDir, "20240102_add_status.yaml", addRequiredStatus)
+	err := runner.MigrateDryRun()
+	if err == nil {
+		t.Fatal("expected dry run to fail on a NOT NULL column added to a non-empty table")
+	}
+	if tableExists(t, runner.DB, "posts") {
+		// posts existing is fine (it was really migrated); just confirm the
+		// dry run didn't also apply the failing alter for real.
+		var count int
+		if err := runner.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('posts') WHERE name = 'status'`).Scan(&count); err != nil {
+			t.Fatalf("pragma_table_info: %v", err)
+		}
+		if count != 0 {
+			t.Fatal("dry run must not leave the failing column behind")
+		}
+	}
+}
+
+func TestRunnerMigrateDryRunRefusesMySQL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultConfig()
+	cfg.DB.Driver = "mysql"
+	cfg.DB.Source = "user:pass@tcp(127.0.0.1:3306)/camel_test"
+
+	runner, err := NewRunner(cfg, dir)
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	defer runner.Close()
+
+	err = runner.MigrateDryRun()
+	if err == nil || !strings.Contains(err.Error(), "mysql") {
+		t.Fatalf("expected a clear mysql refusal error, got: %v", err)
 	}
 }
 

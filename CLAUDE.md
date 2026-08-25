@@ -53,10 +53,16 @@ existence checks are scoped to the current database (`currentDBPredicate`) so a
 same-named table in another schema on a shared server isn't a false positive.
 
 CLI commands: `init`, `config`, `make <name> [--format yaml|json]`,
-`plan [--file path] [--direction up|down]`, `migrate [--pretend]`,
-`rollback [--step N] [--all] [--pretend]`, `reset [--pretend]`, `status`.
+`plan [--file path] [--direction up|down]`, `migrate [--pretend] [--dry-run]`,
+`rollback [--step N] [--all] [--pretend]`, `reset [--pretend]`, `status`,
+`dump [--prune]`, `skill install [--force]`.
 `--pretend` and `plan` print SQL without touching the DB — use them to inspect
-generated SQL while iterating on dialect code.
+generated SQL while iterating on dialect code. `migrate --dry-run` goes
+further: it actually runs pending migrations against the real configured DB
+inside a transaction that's always rolled back, so it catches state-dependent
+failures (existing column, `NOT NULL` add on a non-empty table, missing FK
+target) that pure SQL generation can't see. It refuses on MySQL, whose DDL
+auto-commits and can't be undone by a rollback.
 
 ## Module layout
 

@@ -111,6 +111,77 @@ func (r *Runner) Migrate(pretend bool) error {
 	return nil
 }
 
+// MigrateDryRun runs every pending migration's up statements against the
+// real, configured database — inside a single transaction that is always
+// rolled back — to catch failures that depend on the database's actual
+// current state (a column that already exists, a NOT NULL column added to a
+// table that already has rows, a foreign key whose target isn't really
+// there). camel plan can't see any of that: it only renders SQL from the
+// DSL, it never touches a connection. Nothing is committed and nothing is
+// recorded in the tracking table, regardless of outcome.
+//
+// Pending migrations run in order on one shared transaction (not one
+// transaction per migration) so a later migration sees the tables/columns
+// earlier ones in the same batch would have created — matching what a real
+// `migrate` run would leave in place, right up until the final rollback.
+//
+// MySQL is refused unconditionally: its DDL statements auto-commit, so a
+// transaction rollback would not undo them — a "dry run" there would apply
+// the changes for real while leaving the tracking table (and therefore a
+// later `camel migrate`) out of sync with what actually happened.
+func (r *Runner) MigrateDryRun() error {
+	if normalizeDriver(r.Config.DB.Driver) == "mysql" {
+		return fmt.Errorf("dry-run is not supported on mysql: its DDL statements auto-commit, so a rolled-back transaction can't undo them — run against a disposable copy of the database with a real `camel migrate` instead")
+	}
+
+	migrations, err := ListMigrations(r.Config, r.Dir)
+	if err != nil {
+		return err
+	}
+	if err := r.EnsureRepository(); err != nil {
+		return err
+	}
+	applied, err := r.applied()
+	if err != nil {
+		return err
+	}
+
+	var pending []Migration
+	for _, migration := range migrations {
+		if !applied[migration.Name] {
+			pending = append(pending, migration)
+		}
+	}
+	if len(pending) == 0 {
+		fmt.Println("Nothing to validate — no pending migrations.")
+		return nil
+	}
+
+	tx, err := r.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, migration := range pending {
+		statements, err := StatementsFor(migration, DirectionUp, r.Config.DB.Driver)
+		if err != nil {
+			return fmt.Errorf("%s: %w", migration.Name, err)
+		}
+		for _, statement := range statements {
+			if strings.TrimSpace(statement) == "" {
+				continue
+			}
+			if _, err := tx.Exec(statement); err != nil {
+				return fmt.Errorf("%s: %w", migration.Name, err)
+			}
+		}
+		fmt.Printf("OK   %s\n", migration.Name)
+	}
+	fmt.Println("Dry run passed — no changes were committed.")
+	return nil
+}
+
 // RollbackOptions controls how many applied migrations Rollback reverses.
 //
 // With the zero value, Rollback reverses the most recent batch (every migration

@@ -1,0 +1,22 @@
+---
+description: Scaffold or evolve database migrations for a camel (github.com/martin3zra/camel) project
+globs:
+  - "database/**/*.yaml"
+  - "database/**/*.json"
+  - "**/camel.yaml"
+  - "**/camel.json"
+alwaysApply: false
+---
+
+# db-scaffold
+
+For creating tables, adding/renaming/dropping columns or indexes, adding
+foreign keys, or otherwise designing or evolving a schema in this project's
+camel migrations, follow the full instructions in
+`.cursor/skills/db-scaffold/SKILL.md` (installed by `camel skill install`).
+
+Read the project's `camel.yaml` and existing migration files first, converge
+on the exact column/index/foreign-key shape with the user in plain chat
+(never add inferred relations or indexes silently), write the migration file
+matching camel's DSL, then validate it with `camel plan --file <path>
+--direction up` (and `--direction down`) before considering the task done.
